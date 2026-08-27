@@ -1,0 +1,21 @@
+# @package _global_
+Method: DBDSB
+
+first_num_iter: ${num_iter}
+
+# schedule -- triangular g^2(t): 0.001 at t=0,T, peak 0.05 at t=T/2 (RDSB paper, Sec. 5 experimental details)
+sde: riemannian
+gamma_max: 0.05
+gamma_min: 0.001
+gamma_space: linspace
+
+symmetric_gamma: True
+
+first_coupling: ref # score_divergence requires ref; bridge_matching also supports ind
+
+mean_match: True   # required by bridge_matching; unused by score_divergence
+loss_scale: False  
+std_trick: False
+
+loss_type: score_divergence # or bridge_matching
+n_div_probes: 1   # Hutchinson trace probes per step

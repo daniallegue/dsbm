@@ -226,7 +226,7 @@ class DBDSB_VE:
     return drift_fn
 
 
-class DBDSB_VP(DBDSB_VE):
+class DBDSB_VP(DBDSB_VE): # dx = -½αx dt + σ dW.
   def __init__(self, sig, num_steps, timesteps, shape_x, shape_y, first_coupling, mean_match=False, ot_sampler=None, eps=1e-4, **kwargs):
     assert ot_sampler is None
     super().__init__(sig, num_steps, timesteps, shape_x, shape_y, first_coupling, mean_match=mean_match, ot_sampler=ot_sampler, eps=eps, **kwargs)

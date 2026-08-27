@@ -29,6 +29,43 @@ class BasicNetworkCond(torch.nn.Module):
         return out
 
 
+class ScoreNetwork(torch.nn.Module):
+    def __init__(self, encoder_layers=[16], temb_dim=16, decoder_layers=[128,128], x_dim=3, temb_max_period=10000):
+        super().__init__()
+        self.temb_dim = temb_dim
+        t_enc_dim = temb_dim * 2
+        self.locals = [encoder_layers, temb_dim, decoder_layers, x_dim, temb_max_period]
+
+        self.net = MLP(2 * t_enc_dim,
+                       layer_widths=decoder_layers + [x_dim],
+                       activate_final = False,
+                       activation_fn=torch.nn.LeakyReLU())
+
+        self.t_encoder = MLP(temb_dim,
+                             layer_widths=encoder_layers + [t_enc_dim],
+                             activate_final = True,
+                             activation_fn=torch.nn.LeakyReLU())
+
+        self.x_encoder = MLP(x_dim,
+                             layer_widths=[enc_dim*2 for enc_dim in encoder_layers] + [t_enc_dim],
+                             activate_final = True,
+                             activation_fn=torch.nn.LeakyReLU())
+
+        self.temb_max_period = temb_max_period
+
+    def forward(self, x, y, t):
+        assert y is None
+        if len(x.shape) == 1:
+            x = x.unsqueeze(0)
+
+        t_emb = get_timestep_embedding(t, self.temb_dim, self.temb_max_period)
+        t_emb = self.t_encoder(t_emb)
+        x_emb = self.x_encoder(x)
+        h = torch.cat([x_emb, t_emb], -1)
+        out = self.net(h)
+        return out
+
+
 class ScoreNetworkCond(torch.nn.Module):
     def __init__(self, encoder_layers=[16], temb_dim=16, decoder_layers=[128,128], x_dim=1, y_dim=1, temb_max_period=10000):
         super().__init__()

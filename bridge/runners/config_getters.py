@@ -11,6 +11,7 @@ from .logger import CSVLogger, WandbLogger, Logger
 from torch.utils.data import DataLoader
 from bridge.data.afhq import AFHQ
 from bridge.data.downscaler import DownscalerDataset
+from bridge.data.spherical_harmonics import SphericalHarmonicDataset
 
 cmp = lambda x: transforms.Compose([*x])
 
@@ -145,7 +146,17 @@ def get_model(args):
 
         net = NCSNpp(config)
 
-       
+    elif model_tag == BASIC_MODEL:
+        kwargs = {
+            "encoder_layers": args.model.encoder_layers,
+            "temb_dim": args.model.temb_dim,
+            "decoder_layers": args.model.decoder_layers,
+            "x_dim": args.data.dim,
+            "temb_max_period": args.model.temb_max_period,
+        }
+
+        net = ScoreNetwork(**kwargs)
+
     return net
 
 # Optimizer
@@ -171,6 +182,7 @@ DATASET_CIFAR10 = 'cifar10'
 DATASET_AFHQ = 'afhq'
 DATASET_DOWNSCALER_LOW = 'downscaler_low'
 DATASET_DOWNSCALER_HIGH = 'downscaler_high'
+DATASET_SPHERICAL_HARMONICS = 'spherical_harmonics'
 
 def get_datasets(args):
     dataset_tag = getattr(args, DATASET)
@@ -224,6 +236,11 @@ def get_datasets(args):
         
         init_ds = DownscalerDataset(root=root, resolution=512, wavenumber=wavenumber, split=split, transform=cmp(train_transform))
 
+    # Spherical harmonics dataset
+    if dataset_tag == DATASET_SPHERICAL_HARMONICS:
+        assert args.data.dim == 3
+        init_ds = SphericalHarmonicDataset(l=args.data.l_init, m=args.data.m_init, n_samples=args.data.n_samples)
+
     # FINAL DATASET
 
     final_ds, mean_final, var_final = get_final_dataset(args, init_ds)
@@ -266,6 +283,10 @@ def get_final_dataset(args, init_ds):
             split = args.data.get('split', "train")
             
             final_ds = DownscalerDataset(root=root, resolution=64, split=split, transform=cmp(train_transform))
+
+        if dataset_transfer_tag == DATASET_SPHERICAL_HARMONICS:
+            assert args.data.dim == 3
+            final_ds = SphericalHarmonicDataset(l=args.data.l_final, m=args.data.m_final, n_samples=args.data.n_samples)
 
     else:
         if args.adaptive_mean:

@@ -1,0 +1,9 @@
+# @package _global_
+
+Model: Basic
+model:
+    # Riemannian DSB paper architecture
+    encoder_layers: [128]
+    temb_dim: 64
+    decoder_layers: [512, 512, 512]
+    temb_max_period: 10000

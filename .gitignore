@@ -130,9 +130,14 @@ dmypy.json
 
 experiments/
 
+diagnostic_results/
+outputs/
+
 .idea/
 
 /data/
+
+*.h5ad
 
 /slurm/
 

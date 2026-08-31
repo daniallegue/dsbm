@@ -1,20 +1,24 @@
 import torch
-import torch.nn as nn
 import numpy as np
-from .optimal_transport import OTPlanSampler
 from .manifold import Sphere
 
 class DBDSB_Riemannian:
-    def __init__(self, sig, num_steps, timesteps, shape_x, shape_y, first_coupling, mean_match=True, ot_sampler=None, eps=1e-4, manifold=None, loss_type="bridge_matching", n_div_probes=1, **kwargs):
+    def __init__(self, sig, num_steps, timesteps, shape_x, shape_y, first_coupling, mean_match=True, ot_sampler=None, eps=1e-4, manifold=None, loss_type="bridge_matching", n_div_probes=1, n_bridge_steps=None, r_imf_eps=None, gamma_min=None, gamma_max=None, symmetric_gamma=False, gamma_space='linspace', **kwargs):
         assert ot_sampler is None
         assert first_coupling in ("ind", "ref")
-        assert loss_type in ("bridge_matching", "score_divergence")
+        assert loss_type in ("bridge_matching", "score_divergence", "log_bridge")
         if loss_type == "bridge_matching":
             assert mean_match, "no closed-form manifold drift target; bridge_matching only supports mean_match=True"
         elif loss_type == "score_divergence":
             assert first_coupling == "ref", "score_divergence has no trajectory-based analogue of first_coupling='ind'; it always seeds n=1 from the driftless reference process, so first_coupling must be 'ref'"
         self.loss_type = loss_type
         self.n_div_probes = n_div_probes
+        self.n_bridge_steps = n_bridge_steps
+        self.r_imf_eps = r_imf_eps
+        self.gamma_min = gamma_min
+        self.gamma_max = gamma_max
+        self.symmetric_gamma = symmetric_gamma
+        self.gamma_space = gamma_space
         self.device = timesteps.device
 
         self.sig = sig
@@ -74,14 +78,25 @@ class DBDSB_Riemannian:
         steps_expanded = torch.Tensor(N, num_steps, 1).to(x.device)
 
         drift_fn = self.get_drift_fn_pred(fb)
+        # score_divergence/log_bridge nets are trained (via tangent_field) to output a tangent
+        # vector directly, used as drift as-is; only bridge_matching's mean_match nets predict
+        # an endpoint that needs the log-map conversion in drift_fn
+        tangent_valued_net = self.loss_type in ("score_divergence", "log_bridge")
 
         for k in range(num_steps):
             gamma = gammas[k]
             timestep = timesteps[k]
 
-            pred = net(x, init_samples_y, t)  # predicted endpoint (mean_match=True)
+            pred = net(x, init_samples_y, t)
 
-            if sample and (k == num_steps - 1):
+            if tangent_valued_net:
+                drift = self.manifold.proj_tangent(x, pred)
+                z_bar = torch.randn_like(x)
+                z = self.manifold.proj_tangent(x, z_bar)
+                g2 = self.eps_scale_at(t) 
+                w = drift * timestep + torch.sqrt(g2 * timestep) * z
+                x = self.manifold.exp(x, w)
+            elif sample and (k == num_steps - 1):
                 x = pred
             else:
                 drift = drift_fn(t, x, pred)  # tangent vector at x, pointing towards pred
@@ -204,11 +219,11 @@ class DBDSB_Riemannian:
         with torch.no_grad():
             x_traj, _, _, t_traj = self.record_langevin_seq(traj_net, x0, y0, fixed_direction, sample=False, num_steps=num_steps)
 
-        g_sq = self.sig ** 2
         total_loss = 0.
         for k in range(x_traj.shape[1]):
             x_k = x_traj[:, k].detach().requires_grad_(True)
             t_k = t_traj[:, k]
+            g_sq = self.eps_scale_at(t_k) 
 
             with torch.no_grad():
                 f_k = torch.zeros_like(x_k) if net_fixed is None else self.tangent_field(net_fixed, x_k, y0, t_k)
@@ -217,9 +232,80 @@ class DBDSB_Riemannian:
                 return self.tangent_field(net_train, x, y0, t_k)
 
             b_k = b_fn(x_k)
-            div_b = self.hutchinson_divergence(b_fn, x_k)
+            div_b = self.hutchinson_divergence(b_fn, x_k)  # (N, 1)
 
-            step_loss = 0.5 * ((f_k + b_k) ** 2).sum(dim=-1) + g_sq * div_b.squeeze(-1)
+            step_loss = 0.5 * ((f_k + b_k) ** 2).sum(dim=-1, keepdim=True) + g_sq * div_b  # (N, 1)
             total_loss = total_loss + step_loss.mean()
 
         return total_loss / x_traj.shape[1]
+
+    def _default_bridge_steps(self):
+        return self.num_steps if self.n_bridge_steps is None else self.n_bridge_steps
+
+    def g_sq(self, t):
+        if self.gamma_min is None or self.gamma_max is None:
+            raise ValueError("g_sq requires gamma_min/gamma_max (or pass an explicit eps_scale)")
+        frac = 1.0 - abs(2.0 * t - 1.0) if self.symmetric_gamma else t
+        if self.gamma_space == 'geomspace':
+            return self.gamma_min * (self.gamma_max / self.gamma_min) ** frac
+        return self.gamma_min + (self.gamma_max - self.gamma_min) * frac
+
+    def eps_scale_at(self, t):
+        return self.r_imf_eps if self.r_imf_eps is not None else self.g_sq(t)
+
+    @torch.no_grad()
+    def reciprocal_projection(self, x0, x1, L=None, eps_scale=None):
+        """
+        Returns (traj, t_grid): traj is (N, L+1, *shape_x), traj[:, 0]=x0, traj[:, -1]=x1
+        (Doob-pinned)."""
+        L = self._default_bridge_steps() if L is None else L
+        h = 1.0 / L
+
+        X = x0
+        traj = torch.empty(x0.shape[0], L + 1, *x0.shape[1:], device=x0.device)
+        traj[:, 0] = X
+        t = 0.0
+        for l in range(L):
+            g2 = self.eps_scale_at(t) if eps_scale is None else eps_scale
+            v = self.manifold.log(X, x1)
+            xi = self.manifold.proj_tangent(X, torch.randn_like(X))
+            w = (h / (1.0 - t)) * v + np.sqrt(g2 * h) * xi
+            X = self.manifold.exp(X, w)
+            t = t + h
+            traj[:, l + 1] = X
+
+        traj[:, -1] = x1  # snap endpoint (Doob pinning)
+        t_grid = torch.linspace(0.0, 1.0, L + 1, device=x0.device)
+        return traj, t_grid
+
+    @torch.no_grad()
+    def markov_projection_train_tuple(self, x0, x1, fb, L=None, eps_scale=None):
+        """The Doob-pinned bridge from x0 to x1 has two associated drifts (mirroring
+        drift_f/drift_b above): the forward drift log(x_t,x1)/(1-t), singular at the
+        x1 end (t=1), and the backward (time-reversed) drift log(x_t,x0)/t, singular
+        at the x0 end (t=0). Train net_f on the former, net_b on the latter -- both
+        regress the SAME underlying bridge path, just its two different-direction
+        drifts; using the forward formula for both (as before) trained net_b to flow
+        toward x1, i.e. to stay put at its own sampling start point."""
+        L = self._default_bridge_steps() if L is None else L
+
+        traj, t_grid = self.reciprocal_projection(x0, x1, L=L, eps_scale=eps_scale)
+
+        N = x0.shape[0]
+        if fb == 'f':
+            idx = torch.randint(0, L, (N,), device=x0.device)  # exclude the pinned endpoint (t=1): 0/0
+        else:
+            idx = torch.randint(1, L + 1, (N,), device=x0.device)  # exclude the pinned endpoint (t=0): 0/0
+        x_t = traj[torch.arange(N, device=x0.device), idx]
+        t = t_grid[idx].view(N, *([1] * (len(x0.shape) - 1)))
+
+        if fb == 'f':
+            u = (1.0 / (1.0 - t)) * self.manifold.log(x_t, x1)
+        else:
+            u = (1.0 / t) * self.manifold.log(x_t, x0)
+        return x_t, t, u
+
+    def log_bridge_loss(self, net, x0, x1, fb, y=None, L=None, eps_scale=None):
+        x_t, t, u = self.markov_projection_train_tuple(x0, x1, fb, L=L, eps_scale=eps_scale)
+        v = self.tangent_field(net, x_t, y, t)
+        return ((v - u) ** 2).sum(dim=-1).mean()

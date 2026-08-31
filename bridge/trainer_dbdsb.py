@@ -94,8 +94,21 @@ class IPF_DBDSB:
         elif self.args.sde == "vp":
             self.langevin = DBDSB_VP(self.sigma, self.num_steps, self.timesteps, self.shape_x, self.shape_y, self.args.first_coupling, self.args.mean_match)
         elif self.args.sde == "riemannian":
+            manifold_tag = self.args.get("manifold", "sphere")
+            if manifold_tag == "sphere":
+                manifold = Sphere()
+            elif manifold_tag == "torus":
+                manifold = Torus()
+            elif manifold_tag == "so3":
+                manifold = SO3(n_copies=self.args.get("n_frames", 1))
+            else:
+                raise NotImplementedError(manifold_tag)
             self.langevin = DBDSB_Riemannian(self.sigma, self.num_steps, self.timesteps, self.shape_x, self.shape_y, self.args.first_coupling, self.args.mean_match,
-                                              loss_type=self.args.get("loss_type", "bridge_matching"), n_div_probes=self.args.get("n_div_probes", 1))
+                                              loss_type=self.args.get("loss_type", "bridge_matching"), n_div_probes=self.args.get("n_div_probes", 1),
+                                              n_bridge_steps=self.args.get("n_bridge_steps", None), r_imf_eps=self.args.get("r_imf_eps", None),
+                                              gamma_min=self.args.gamma_min, gamma_max=self.args.gamma_max,
+                                              symmetric_gamma=self.args.symmetric_gamma, gamma_space=self.args.gamma_space,
+                                              manifold=manifold)
 
         self.npar = len(init_ds)
         self.cache_npar = self.args.cache_npar if self.args.cache_npar is not None else self.batch_size * self.args.cache_refresh_stride // self.num_repeat_data
@@ -149,7 +162,10 @@ class IPF_DBDSB:
             self.ckpt_dir_load = os.path.abspath(self.ckpt_dir)
             ckpt_dir_load_list = os.path.normpath(self.ckpt_dir_load).split(os.sep)
             if 'test' in ckpt_dir_load_list:
-                self.ckpt_dir_load = os.path.join(os.sep, *ckpt_dir_load_list[:ckpt_dir_load_list.index('test')], "checkpoints/")
+                # os.path.join(os.sep, *parts) mishandles a Windows drive-letter first part
+                # (os.path.join('\\', 'C:', ...) drops the leading separator entirely, since
+                # ntpath treats 'C:' as resetting the path); os.sep.join is drive-safe on both.
+                self.ckpt_dir_load = os.path.join(os.sep.join(ckpt_dir_load_list[:ckpt_dir_load_list.index('test')]), "checkpoints/")
             self.resume, self.checkpoint_it, self.checkpoint_pass, self.step, ckpt_b_suffix, ckpt_f_suffix = self.find_last_ckpt()
 
             self.resume_f = False
@@ -588,6 +604,8 @@ class IPF_DBDSB:
         loss_type = getattr(self.langevin, 'loss_type', 'bridge_matching')
         if loss_type == 'score_divergence':
             self.ipf_iter_score_div(forward_or_backward, n)
+        elif loss_type == 'log_bridge':
+            self.ipf_iter_log_bridge(forward_or_backward, n)
         else:
             self.ipf_iter_bridge_matching(forward_or_backward, n)
 
@@ -656,6 +674,108 @@ class IPF_DBDSB:
                 loss_scale = 1.
 
             loss = F.mse_loss(loss_scale*pred, loss_scale*out)
+
+            self.accelerator.backward(loss)
+
+            if self.grad_clipping:
+                clipping_param = self.args.grad_clip
+                total_norm = self.accelerator.clip_grad_norm_(self.net[forward_or_backward].parameters(), clipping_param)
+            else:
+                total_norm = 0.
+
+            if i == 1 or i % self.stride_log == 0 or i == num_iter:
+                self.logger.log_metrics({'fb': forward_or_backward,
+                                         'ipf': n,
+                                         'loss': loss,
+                                         'grad_norm': total_norm,
+                                         "cache_epochs": self.cache_epochs,
+                                         "num_repeat_data": self.num_repeat_data,
+                                         "data_epochs": self.data_epochs}, step=self.compute_current_step(i, n))
+
+            self.optimizer[forward_or_backward].step()
+            self.optimizer[forward_or_backward].zero_grad(set_to_none=True)
+            if self.args.ema:
+                self.ema_helpers[forward_or_backward].update(self.accelerator.unwrap_model(self.net[forward_or_backward]))
+
+            self.i, self.n, self.fb = i, n, forward_or_backward
+
+            if i != num_iter:
+                self.save_step(i, n, forward_or_backward)
+
+        # Pre-cache current iter at end of training
+        new_dl = None
+        self.save_ckpt(num_iter, n, forward_or_backward)
+        if not first_it_fn(*self.compute_next_it(forward_or_backward, n)):
+            self.new_cacheloader(forward_or_backward, n, build_dataloader=False)
+
+        self.save_step(num_iter, n, forward_or_backward)
+
+        self.net[forward_or_backward] = self.accelerator.unwrap_model(self.net[forward_or_backward])
+        self.clear()
+        self.first_pass = False
+
+    def ipf_iter_log_bridge(self, forward_or_backward, n):
+        if self.first_pass:
+            step = self.step
+        else:
+            step = 1
+
+        self.set_seed(seed=self.compute_current_step(step - 1, n) * self.accelerator.num_processes + self.accelerator.process_index)
+        self.i, self.n, self.fb = step - 1, n, forward_or_backward
+
+        if (not self.first_pass) and (not self.args.use_prev_net):
+            self.build_models(forward_or_backward)
+            self.build_optimizers(forward_or_backward)
+
+        self.accelerate(forward_or_backward)
+
+        if (forward_or_backward not in self.ema_helpers.keys()) or ((not self.first_pass) and (not self.args.use_prev_net)):
+            self.update_ema(forward_or_backward)
+
+        num_iter = self.compute_max_iter(forward_or_backward, n)
+
+        def first_it_fn(forward_or_backward, n):
+            if self.args.first_coupling == 'ref':
+                first_it = ((n == 1) and (forward_or_backward == 'b'))
+            elif self.args.first_coupling == 'ind':
+                first_it = (n == 1)
+            return first_it
+        first_it = first_it_fn(forward_or_backward, n)
+
+        for i in tqdm(range(step, num_iter + 1), mininterval=30):
+
+            if (i == step) or ((i-1) % self.args.cache_refresh_stride == 0):
+                new_dl = None
+                torch.cuda.empty_cache()
+                if not first_it:
+                    new_dl = self.new_cacheloader(*self.compute_prev_it(forward_or_backward, n), refresh_idx=(i-1) // self.args.cache_refresh_stride)
+
+            self.net[forward_or_backward].train()
+
+            self.set_seed(seed=self.compute_current_step(i, n) * self.accelerator.num_processes + self.accelerator.process_index)
+
+            y = None
+            if first_it:
+                x0, y, x1, _, _ = self.sample_batch(self.init_dl, self.final_dl)
+            else:
+                if self.cdsb:
+                    x0, x1, y = next(new_dl)
+                else:
+                    x0, x1 = next(new_dl)
+
+            x0, x1 = x0.to(self.device), x1.to(self.device)
+
+            if first_it and forward_or_backward == 'b' and self.args.first_coupling == 'ref':
+                # use a reference processing to get x1 for the first backward pass
+                x1 = self.langevin.record_langevin_seq(self.langevin._zero_drift_net, x0, None, 'f', sample=False)[0][:, -1]
+
+            x0, x1 = x0.repeat_interleave(self.num_repeat_data, dim=0), x1.repeat_interleave(self.num_repeat_data, dim=0)
+
+            if self.cdsb:
+                y = y.to(self.device)
+                y = y.repeat_interleave(self.num_repeat_data, dim=0)
+
+            loss = self.langevin.log_bridge_loss(self.net[forward_or_backward], x0, x1, forward_or_backward, y=y)
 
             self.accelerator.backward(loss)
 

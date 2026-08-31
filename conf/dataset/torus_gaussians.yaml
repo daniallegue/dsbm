@@ -1,0 +1,52 @@
+# @package _global_
+
+cdsb: False
+
+# data
+Dataset: torus_gaussians
+manifold: torus
+data:
+  dataset: "TorusGaussians"
+  dim: 2
+  n_modes_init: 4
+  n_modes_final: 8
+  kappa: 8.0
+  ring_radius: 2.0
+  n_samples: 20000
+
+# transfer
+transfer: True
+Dataset_transfer: torus_gaussians
+
+final_adaptive: False
+adaptive_mean: False
+load: True
+
+# device
+device: cuda
+num_workers: 0
+pin_memory: True
+
+# logging
+log_stride: 100
+gif_stride: 1000
+plot_npar: 500
+test_npar: 2000
+test_batch_size: 500
+cache_npar: 2000
+cache_batch_size: 500
+num_repeat_data: 1
+cache_refresh_stride: 200
+
+# training
+use_prev_net: True
+ema: True
+ema_rate: 0.999
+grad_clipping: True
+grad_clip: 1.0
+batch_size: 128
+num_iter: 2000
+n_ipf: 10
+lr: 0.0001
+
+num_steps: 10

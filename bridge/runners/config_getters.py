@@ -12,6 +12,8 @@ from torch.utils.data import DataLoader
 from bridge.data.afhq import AFHQ
 from bridge.data.downscaler import DownscalerDataset
 from bridge.data.spherical_harmonics import SphericalHarmonicDataset
+from bridge.data.torus import TorusMixtureDataset
+from bridge.data.alanine_dipeptide import AlanineDipeptideFramesDataset
 
 cmp = lambda x: transforms.Compose([*x])
 
@@ -183,6 +185,8 @@ DATASET_AFHQ = 'afhq'
 DATASET_DOWNSCALER_LOW = 'downscaler_low'
 DATASET_DOWNSCALER_HIGH = 'downscaler_high'
 DATASET_SPHERICAL_HARMONICS = 'spherical_harmonics'
+DATASET_TORUS_GAUSSIANS = 'torus_gaussians'
+DATASET_ALANINE_DIPEPTIDE = 'alanine_dipeptide'
 
 def get_datasets(args):
     dataset_tag = getattr(args, DATASET)
@@ -241,6 +245,21 @@ def get_datasets(args):
         assert args.data.dim == 3
         init_ds = SphericalHarmonicDataset(l=args.data.l_init, m=args.data.m_init, n_samples=args.data.n_samples)
 
+    # Torus (flat, zero curvature) mixture dataset
+    if dataset_tag == DATASET_TORUS_GAUSSIANS:
+        assert args.data.dim == 2
+        init_ds = TorusMixtureDataset(n_modes=args.data.n_modes_init, kappa=args.data.kappa,
+                                       n_samples=args.data.n_samples, ring_radius=args.data.ring_radius, seed=1)
+
+    # Alanine dipeptide relative-backbone-frame dataset (SO(3)), source basin
+    if dataset_tag == DATASET_ALANINE_DIPEPTIDE:
+        assert args.data.dim == 9
+        init_ds = AlanineDipeptideFramesDataset(
+            basin=args.data.basin_init, n_samples=args.data.n_samples,
+            cache_dir=os.path.join(data_dir, 'alanine_dipeptide'),
+            temperature_k=args.data.md_temperature_k, friction_per_ps=args.data.md_friction_per_ps,
+            save_every=args.data.md_save_every, ball_radius=args.data.basin_ball_radius, seed=1)
+
     # FINAL DATASET
 
     final_ds, mean_final, var_final = get_final_dataset(args, init_ds)
@@ -287,6 +306,21 @@ def get_final_dataset(args, init_ds):
         if dataset_transfer_tag == DATASET_SPHERICAL_HARMONICS:
             assert args.data.dim == 3
             final_ds = SphericalHarmonicDataset(l=args.data.l_final, m=args.data.m_final, n_samples=args.data.n_samples)
+
+        if dataset_transfer_tag == DATASET_TORUS_GAUSSIANS:
+            assert args.data.dim == 2
+            phase_offset = np.pi / args.data.n_modes_final
+            final_ds = TorusMixtureDataset(n_modes=args.data.n_modes_final, kappa=args.data.kappa,
+                                            n_samples=args.data.n_samples, ring_radius=args.data.ring_radius,
+                                            phase_offset=phase_offset, seed=2)
+
+        if dataset_transfer_tag == DATASET_ALANINE_DIPEPTIDE:
+            assert args.data.dim == 9
+            final_ds = AlanineDipeptideFramesDataset(
+                basin=args.data.basin_final, n_samples=args.data.n_samples,
+                cache_dir=os.path.join(data_dir, 'alanine_dipeptide'),
+                temperature_k=args.data.md_temperature_k, friction_per_ps=args.data.md_friction_per_ps,
+                save_every=args.data.md_save_every, ball_radius=args.data.basin_ball_radius, seed=2)
 
     else:
         if args.adaptive_mean:

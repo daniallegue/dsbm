@@ -1,0 +1,55 @@
+# @package _global_
+
+cdsb: False
+
+# data
+Dataset: alanine_dipeptide
+manifold: so3
+n_frames: 1
+data:
+  dataset: "AlanineDipeptideFrames"
+  dim: 9
+  basin_init: c7eq
+  basin_final: c7ax
+  n_samples: 2500
+  md_temperature_k: 300.0
+  md_friction_per_ps: 1.0
+  md_save_every: 10          # save every 10 fs steps, matching the TPS-DPS convention
+  basin_ball_radius: 0.75    # radians, wrapped (phi,psi) distance to the basin center (TPS-DPS convention)
+
+# transfer
+transfer: True
+Dataset_transfer: alanine_dipeptide
+
+final_adaptive: False
+adaptive_mean: False
+load: True
+
+# device
+device: cuda
+num_workers: 0
+pin_memory: True
+
+# logging
+log_stride: 100
+gif_stride: 1000
+plot_npar: 500
+test_npar: 2000
+test_batch_size: 500
+cache_npar: 2000
+cache_batch_size: 500
+num_repeat_data: 1
+cache_refresh_stride: 200
+
+# training
+use_prev_net: True
+ema: True
+ema_rate: 0.999
+grad_clipping: True
+grad_clip: 1.0
+batch_size: 128
+num_iter: 2000
+n_ipf: 10
+lr: 0.0001
+
+num_steps: 10

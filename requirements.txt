@@ -29,3 +29,9 @@ torch-fidelity>=0.4.0 # backend for torchmetrics' FrechetInceptionDistance
 
 # Optional: only needed for conf/launcher/slurm_*.yaml (cluster submission via Hydra)
 # hydra-submitit-launcher
+
+# Alanine dipeptide SO(3) bridge benchmark (bridge/data/alanine_dipeptide.py,
+# conf/dataset/alanine_dipeptide.yaml): builds + simulates the capped dipeptide
+# to generate the two basin marginals; not needed for any other dataset.
+openmm==8.6.0
+rdkit==2023.9.5

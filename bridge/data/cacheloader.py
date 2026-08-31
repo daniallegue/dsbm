@@ -75,15 +75,14 @@ def CacheLoader(fb, sample_net, init_dl, final_dl, num_batches, langevin, ipf, n
 def DBDSB_CacheLoader(sample_direction, sample_fn, init_dl, final_dl, num_batches, langevin, ipf, n, refresh_idx=0, refresh_tot=1, device='cpu'):
     start = time.time()
 
-    # New method, saving as npy
-    cache_filename_npy = f'cache_{sample_direction}_{n:03}.npy'
+    cache_filename_npy = f'cache_{sample_direction}_{n:03}_{refresh_idx:03}.npy'
     cache_filepath_npy = os.path.join(ipf.cache_dir, cache_filename_npy)
 
-    cache_filename_txt = f'cache_{sample_direction}_{n:03}.txt'
+    cache_filename_txt = f'cache_{sample_direction}_{n:03}_{refresh_idx:03}.txt'
     cache_filepath_txt = os.path.join(ipf.cache_dir, cache_filename_txt)
 
     if ipf.cdsb:
-        cache_y_filename_npy = f'cache_y_{sample_direction}_{n:03}.npy'
+        cache_y_filename_npy = f'cache_y_{sample_direction}_{n:03}_{refresh_idx:03}.npy'
         cache_y_filepath_npy = os.path.join(ipf.cache_dir, cache_y_filename_npy)
 
     # Temporary cache of each batch
@@ -246,18 +245,24 @@ def DBDSB_CacheLoader(sample_direction, sample_fn, init_dl, final_dl, num_batche
         ipf.plotter.save_image(torch.from_numpy(fp[:num_plots_grid, 0]), f'cache_{sample_direction}_{n:03}_x0', "./", domain=0)
         ipf.plotter.save_image(torch.from_numpy(fp[:num_plots_grid, 1]), f'cache_{sample_direction}_{n:03}_x1', "./", domain=1)
 
-        # Automatically delete old cache files
+        # Automatically delete old cache files 
         for fb in ['f', 'b']:
             existing_cache_files = sorted(glob.glob(os.path.join(ipf.cache_dir, f"cache_{fb}_**.npy")))
             for ckpt_i in range(max(len(existing_cache_files)-1, 0)):
                 if not os.path.samefile(existing_cache_files[ckpt_i], cache_filepath_npy):
-                    os.remove(existing_cache_files[ckpt_i])
+                    try:
+                        os.remove(existing_cache_files[ckpt_i])
+                    except OSError:
+                        pass
 
             if ipf.cdsb:
                 existing_cache_files = sorted(glob.glob(os.path.join(ipf.cache_dir, f"cache_y_{fb}_**.npy")))
                 for ckpt_i in range(max(len(existing_cache_files)-1, 0)):
                     if not os.path.samefile(existing_cache_files[ckpt_i], cache_filepath_npy):
-                        os.remove(existing_cache_files[ckpt_i])
+                        try:
+                            os.remove(existing_cache_files[ckpt_i])
+                        except OSError:
+                            pass
 
     del fp
 

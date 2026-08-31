@@ -158,7 +158,7 @@ class DBDSB_VE:
       z0, z1 = z0.view(original_shape), z1.view(original_shape)
 
     t = torch.rand(z1.shape[0], device=self.device) * (1-2*self.eps) + self.eps
-    t = t[:, None, None, None]
+    t = self._reshape_t(t, z1)
     z_t = t * z1 + (1.-t) * z0
     z = torch.randn_like(z_t)
     z_t = z_t + self.sig * torch.sqrt(t*(1.-t)) * z
@@ -195,12 +195,16 @@ class DBDSB_VE:
   def M_b(self, t):
     return 1./t
 
+  @staticmethod
+  def _reshape_t(t, x):
+    return t.view(t.shape[0], *([1] * (len(x.shape) - 1)))
+
   def drift_f(self, t, x, init, final):
-    t = t.view(t.shape[0], 1, 1, 1)
+    t = self._reshape_t(t, x)
     return self.A_f(t) * x + self.M_f(t) * final
 
   def drift_b(self, t, x, init, final):
-    t = t.view(t.shape[0], 1, 1, 1)
+    t = self._reshape_t(t, x)
     return self.A_b(t) * x + self.M_b(t) * init
 
   def get_drift_fn_net(self, net, fb, y=None):

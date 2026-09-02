@@ -264,6 +264,13 @@ class IPF_DBDSB:
                     self.ema_helpers['b'].register(sample_net_b)
 
     def build_dataloader(self, ds, batch_size, shuffle=True, drop_last=True, repeat=True):
+        # Datasets that set `paired = True` (e.g. TetrapeptideTPSMultiDataset) rely on their
+        # index order matching a sibling dataset's index-for-index (same peptide at index i in
+        # both the start and end dataset) -- shuffling would independently reorder each
+        # DataLoader and break that alignment, so force deterministic (shuffle=False) iteration
+        # for them regardless of the caller's requested `shuffle`.
+        shuffle = shuffle and not getattr(ds, "paired", False)
+
         def worker_init_fn(worker_id):
             np.random.seed(np.random.get_state()[1][0] + worker_id + self.accelerator.process_index * self.args.num_workers)
         dl_kwargs = {"num_workers": self.args.num_workers,

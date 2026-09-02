@@ -1,0 +1,11 @@
+# @package _global_
+
+Model: BasicProteinCond
+model:
+    # Riemannian DSB paper architecture (conf/model/Basic.yaml), plus an additive per-residue
+    # amino-acid-type embedding -- see bridge/models/basic/protein_cond.py
+    encoder_layers: [128]
+    temb_dim: 64
+    decoder_layers: [512, 512, 512]
+    temb_max_period: 10000
+    cond_emb_dim: 16

@@ -15,6 +15,7 @@ from bridge.data.spherical_harmonics import SphericalHarmonicDataset
 from bridge.data.torus import TorusMixtureDataset
 from bridge.data.alanine_dipeptide import AlanineDipeptideFramesDataset
 from bridge.data.tetrapeptide_tps import TetrapeptideTPSDataset
+from bridge.data.tetrapeptide_tps_multi import TetrapeptideTPSMultiDataset
 
 cmp = lambda x: transforms.Compose([*x])
 
@@ -39,6 +40,7 @@ def get_plotter(runner, args):
 
 MODEL = 'Model'
 BASIC_MODEL = 'Basic'
+BASIC_PROTEIN_COND_MODEL = 'BasicProteinCond'
 UNET_MODEL = 'UNET'
 DOWNSCALER_UNET_MODEL = 'DownscalerUNET'
 DDPMPP_MODEL = 'DDPMpp'
@@ -160,6 +162,19 @@ def get_model(args):
 
         net = ScoreNetwork(**kwargs)
 
+    elif model_tag == BASIC_PROTEIN_COND_MODEL:
+        kwargs = {
+            "encoder_layers": args.model.encoder_layers,
+            "temb_dim": args.model.temb_dim,
+            "decoder_layers": args.model.decoder_layers,
+            "x_dim": args.data.dim,
+            "n_residues": args.data.n_residues,
+            "cond_emb_dim": args.model.cond_emb_dim,
+            "temb_max_period": args.model.temb_max_period,
+        }
+
+        net = ScoreNetworkProteinCond(**kwargs)
+
     return net
 
 # Optimizer
@@ -189,6 +204,7 @@ DATASET_SPHERICAL_HARMONICS = 'spherical_harmonics'
 DATASET_TORUS_GAUSSIANS = 'torus_gaussians'
 DATASET_ALANINE_DIPEPTIDE = 'alanine_dipeptide'
 DATASET_TETRAPEPTIDE_TPS = 'tetrapeptide_tps'
+DATASET_TETRAPEPTIDE_TPS_MULTI = 'tetrapeptide_tps_multi'
 
 def get_datasets(args):
     dataset_tag = getattr(args, DATASET)
@@ -272,6 +288,19 @@ def get_datasets(args):
             cache_dir=hydra.utils.to_absolute_path(args.data.cache_dir),
             n_samples=args.data.n_samples, seed=1)
 
+    # Amortized (peptide-conditioned) tetrapeptide TPS dataset: same manifold/dim as above, but
+    # each item is drawn from one of many peptides (bridge/data/tetrapeptide_tps_multi.py), with
+    # `y` carrying that peptide's per-residue amino-acid-type indices for the conditioned network
+    # (bridge/models/basic/protein_cond.py). start-endpoint here; end-endpoint in get_final_dataset.
+    if dataset_tag == DATASET_TETRAPEPTIDE_TPS_MULTI:
+        assert args.data.dim == 3 * (args.data.n_residues - 1) + 9 * (args.data.n_residues - 1) + args.data.n_torsions * args.data.n_residues
+        init_ds = TetrapeptideTPSMultiDataset(
+            endpoint="start", split=args.data.split,
+            data_dir=hydra.utils.to_absolute_path(args.data.data_dir),
+            cache_dir=hydra.utils.to_absolute_path(args.data.cache_dir),
+            n_samples=args.data.n_samples, peptide_seed=args.data.peptide_schedule_seed,
+            sample_seed=1, max_peptides=args.data.get("max_peptides", None))
+
     # FINAL DATASET
 
     final_ds, mean_final, var_final = get_final_dataset(args, init_ds)
@@ -341,6 +370,18 @@ def get_final_dataset(args, init_ds):
                 data_dir=hydra.utils.to_absolute_path(args.data.data_dir),
                 cache_dir=hydra.utils.to_absolute_path(args.data.cache_dir),
                 n_samples=args.data.n_samples, seed=2)
+
+        if dataset_transfer_tag == DATASET_TETRAPEPTIDE_TPS_MULTI:
+            assert args.data.dim == 3 * (args.data.n_residues - 1) + 9 * (args.data.n_residues - 1) + args.data.n_torsions * args.data.n_residues
+            # peptide_seed MUST match get_datasets' init_ds call above -- see
+            # bridge/data/tetrapeptide_tps_multi.py's pairing contract docstring; only
+            # sample_seed (which raw MD frame within the peptide's state) differs.
+            final_ds = TetrapeptideTPSMultiDataset(
+                endpoint="end", split=args.data.split,
+                data_dir=hydra.utils.to_absolute_path(args.data.data_dir),
+                cache_dir=hydra.utils.to_absolute_path(args.data.cache_dir),
+                n_samples=args.data.n_samples, peptide_seed=args.data.peptide_schedule_seed,
+                sample_seed=2, max_peptides=args.data.get("max_peptides", None))
 
     else:
         if args.adaptive_mean:

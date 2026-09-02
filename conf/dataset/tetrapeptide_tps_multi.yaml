@@ -1,0 +1,61 @@
+# @package _global_
+
+cdsb: True
+
+# data
+Dataset: tetrapeptide_tps_multi
+manifold: protein
+data:
+  dataset: "TetrapeptideTPSMulti"
+  dim: 64                    # 3*(n_residues-1) + 9*(n_residues-1) + n_torsions*n_residues --
+                               # fixed across every peptide in the 4AA split (all length 4), see
+                               # bridge/data/tetrapeptide_tps.py::root_relative_frames
+  n_residues: 4               # tetrapeptide: L=4
+  n_torsions: 7                # pre-omega, phi, psi, chi1-4 (mdgen/geometry.py::atom37_to_torsions)
+  split: "4AA_train"           # vendor/mdgen/splits/4AA_train.csv -- filtered at load time to
+                               # whichever peptides actually have data on disk, see
+                               # bridge/data/tetrapeptide_tps_multi.py::_available_peptides
+  data_dir: ${paths.data_dir_name}/4AA_data          # atom14 .npy from vendor/mdgen/scripts/prep_sims.py (no stride/suffix)
+  cache_dir: ${paths.data_dir_name}/tetrapeptide_tps  # peptide-root: {cache_dir}/{peptide}/{peptide}_states.npz
+  n_samples: 2500
+  peptide_schedule_seed: 0     # MUST be shared between the start/end dataset construction calls
+                               # in bridge/runners/config_getters.py -- see
+                               # bridge/data/tetrapeptide_tps_multi.py's pairing contract docstring
+  max_peptides: null           # cap the peptide pool (e.g. for smoke tests); null = use all available
+
+# transfer
+transfer: True
+Dataset_transfer: tetrapeptide_tps_multi
+
+final_adaptive: False
+adaptive_mean: False
+load: True
+
+# device
+device: cuda
+num_workers: 0
+pin_memory: True
+
+# logging
+log_stride: 100
+gif_stride: 1000
+plot_npar: 500
+test_npar: 2000
+test_batch_size: 500
+cache_npar: 2000
+cache_batch_size: 500
+num_repeat_data: 1
+cache_refresh_stride: 200
+
+# training
+use_prev_net: True
+ema: True
+ema_rate: 0.999
+grad_clipping: True
+grad_clip: 1.0
+batch_size: 128
+num_iter: 2000
+n_ipf: 10
+lr: 0.0001
+
+num_steps: 10

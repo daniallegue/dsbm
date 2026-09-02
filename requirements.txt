@@ -2,7 +2,10 @@
 # run_diagnostic.py, DSBM-Gaussian.py)
 hydra-core==1.3.5
 omegaconf==2.3.1
-numpy==1.26.4
+# Bumped from 1.26.4 to satisfy mdtraj (tetrapeptide TPS experiment, below), which
+# requires numpy 2.x; verified openmm/rdkit still import fine under 2.4.6 (noisy but
+# harmless "compiled for NumPy 1.x" warnings from rdkit's legacy compat shim).
+numpy>=2.0,<2.5
 scipy==1.17.1
 torch==2.13.0
 
@@ -35,3 +38,17 @@ torch-fidelity>=0.4.0 # backend for torchmetrics' FrechetInceptionDistance
 # to generate the two basin marginals; not needed for any other dataset.
 openmm==8.6.0
 rdkit==2023.9.5
+
+# Tetrapeptide TPS SE(3)^4 x T^28 R-IMF benchmark (bridge/data/tetrapeptide_tps.py,
+# conf/dataset/tetrapeptide_tps.yaml, vendor/mdgen/): reads mdgen's prepped atom14
+# .npy sims and converts to frames+torsions via vendored mdgen/geometry.py. mdtraj
+# is also used by vendor/mdgen/scripts/prep_sims.py and by the sampling/export
+# script to write out generated trajectories as .pdb/.xtc.
+mdtraj>=1.11
+biopython>=1.85   # vendor/mdgen/mdgen/protein.py (PDB writing)
+dm-tree>=0.1.8    # vendor/mdgen/mdgen/residue_constants.py
+# pyemma (mdgen/analysis.py's TICA/k-means/MSM fitting + the analyze_peptide_tps.py
+# eval script) has no Windows wheels and fails to build from source against MSVC.
+# It is NOT installed here -- use the separate `tps_eval` conda env instead
+# (`conda create -n tps_eval -c conda-forge python=3.11 pyemma mdtraj pandas`).
+# See vendor/mdgen/PROVENANCE.md.

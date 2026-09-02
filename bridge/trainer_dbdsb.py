@@ -101,6 +101,21 @@ class IPF_DBDSB:
                 manifold = Torus()
             elif manifold_tag == "so3":
                 manifold = SO3(n_copies=self.args.get("n_frames", 1))
+            elif manifold_tag == "protein":
+                L = self.args.data.n_residues
+                n_torsions = self.args.data.n_torsions
+                # n_frames = L-1: root-relative SE(3) frames for residues 1..L-1;
+                # residue 0's absolute pose is dropped (pure gauge -- see
+                # bridge/data/tetrapeptide_tps.py::root_relative_frames), making the
+                # representation invariant to global rotation/translation of the
+                # whole molecule, same fix bridge/data/alanine_dipeptide.py already
+                # applies for its single relative SO(3) frame.
+                n_frames = L - 1
+                manifold = Product([
+                    (Euclidean(3 * n_frames), 3 * n_frames),
+                    (SO3(n_copies=n_frames), 9 * n_frames),
+                    (Torus(), n_torsions * L),
+                ])
             else:
                 raise NotImplementedError(manifold_tag)
             self.langevin = DBDSB_Riemannian(self.sigma, self.num_steps, self.timesteps, self.shape_x, self.shape_y, self.args.first_coupling, self.args.mean_match,

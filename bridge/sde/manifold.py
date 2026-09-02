@@ -59,6 +59,24 @@ class Torus(Manifold):
         return self._wrap(y - x)
 
 
+class Euclidean(Manifold):
+    """Flat R^d (last dim of x): trivial manifold, used as a Product component for
+    unconstrained ambient blocks (e.g. backbone-frame translations). `dim` is purely
+    documentary here (all ops are elementwise); Product tracks each block's size itself."""
+
+    def __init__(self, dim=None):
+        self.dim = dim
+
+    def proj_tangent(self, x, v):
+        return v
+
+    def exp(self, x, v):
+        return x + v
+
+    def log(self, x, y):
+        return y - x
+
+
 class SO3(Manifold):
     """
     Product SO(3)^n_copies, each factor embedded in R^{3x3} with the ambient
@@ -111,6 +129,41 @@ class SO3(Manifold):
         sin_theta = torch.sin(theta).clamp_min(self.eps)
         a = torch.where(theta < self.eps, torch.zeros_like(diff), (theta / (2 * sin_theta)) * diff)
         return self._flatten(x @ a)
+
+
+class Product(Manifold):
+    """Product manifold M_1 x ... x M_k, with ambient x/v the concatenation (last dim)
+    of each factor's ambient block. `components` is a list of (manifold, ambient_size)
+    pairs; proj_tangent/exp/log slice out each block, dispatch to its own manifold, and
+    re-concatenate. E.g. SE(3)^L x T^n = Product([(Euclidean(3*L), 3*L),
+    (SO3(n_copies=L), 9*L), (Torus(), n)])."""
+
+    def __init__(self, components):
+        self.components = components
+        sizes = [size for _, size in components]
+        self._slices = []
+        start = 0
+        for size in sizes:
+            self._slices.append(slice(start, start + size))
+            start += size
+        self.dim = start
+
+    def _apply(self, fn_name, *args):
+        # args are ambient tensors (x, v) or (x, y), each (..., dim)
+        parts = []
+        for (manifold, _), sl in zip(self.components, self._slices):
+            sliced_args = [a[..., sl] for a in args]
+            parts.append(getattr(manifold, fn_name)(*sliced_args))
+        return torch.cat(parts, dim=-1)
+
+    def proj_tangent(self, x, v):
+        return self._apply('proj_tangent', x, v)
+
+    def exp(self, x, v):
+        return self._apply('exp', x, v)
+
+    def log(self, x, y):
+        return self._apply('log', x, y)
 
 
 @torch.no_grad()

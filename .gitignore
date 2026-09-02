@@ -74,6 +74,9 @@ docs/_build/
 # PyBuilder
 target/
 
+# Docs
+docs/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
@@ -129,6 +132,7 @@ dmypy.json
 .pyre/
 
 experiments/
+results/
 
 diagnostic_results/
 outputs/

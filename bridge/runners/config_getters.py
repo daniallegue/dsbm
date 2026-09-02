@@ -14,6 +14,7 @@ from bridge.data.downscaler import DownscalerDataset
 from bridge.data.spherical_harmonics import SphericalHarmonicDataset
 from bridge.data.torus import TorusMixtureDataset
 from bridge.data.alanine_dipeptide import AlanineDipeptideFramesDataset
+from bridge.data.tetrapeptide_tps import TetrapeptideTPSDataset
 
 cmp = lambda x: transforms.Compose([*x])
 
@@ -187,6 +188,7 @@ DATASET_DOWNSCALER_HIGH = 'downscaler_high'
 DATASET_SPHERICAL_HARMONICS = 'spherical_harmonics'
 DATASET_TORUS_GAUSSIANS = 'torus_gaussians'
 DATASET_ALANINE_DIPEPTIDE = 'alanine_dipeptide'
+DATASET_TETRAPEPTIDE_TPS = 'tetrapeptide_tps'
 
 def get_datasets(args):
     dataset_tag = getattr(args, DATASET)
@@ -260,6 +262,16 @@ def get_datasets(args):
             temperature_k=args.data.md_temperature_k, friction_per_ps=args.data.md_friction_per_ps,
             save_every=args.data.md_save_every, ball_radius=args.data.basin_ball_radius, seed=1)
 
+    # Tetrapeptide TPS SE(3)^(L-1) x T^(n_torsions*L) dataset (root-relative frames,
+    # see bridge/data/tetrapeptide_tps.py::root_relative_frames), start-state endpoint
+    if dataset_tag == DATASET_TETRAPEPTIDE_TPS:
+        assert args.data.dim == 3 * (args.data.n_residues - 1) + 9 * (args.data.n_residues - 1) + args.data.n_torsions * args.data.n_residues
+        init_ds = TetrapeptideTPSDataset(
+            peptide=args.data.peptide, endpoint="start",
+            data_dir=hydra.utils.to_absolute_path(args.data.data_dir),
+            cache_dir=hydra.utils.to_absolute_path(args.data.cache_dir),
+            n_samples=args.data.n_samples, seed=1)
+
     # FINAL DATASET
 
     final_ds, mean_final, var_final = get_final_dataset(args, init_ds)
@@ -321,6 +333,14 @@ def get_final_dataset(args, init_ds):
                 cache_dir=os.path.join(data_dir, 'alanine_dipeptide'),
                 temperature_k=args.data.md_temperature_k, friction_per_ps=args.data.md_friction_per_ps,
                 save_every=args.data.md_save_every, ball_radius=args.data.basin_ball_radius, seed=2)
+
+        if dataset_transfer_tag == DATASET_TETRAPEPTIDE_TPS:
+            assert args.data.dim == 3 * (args.data.n_residues - 1) + 9 * (args.data.n_residues - 1) + args.data.n_torsions * args.data.n_residues
+            final_ds = TetrapeptideTPSDataset(
+                peptide=args.data.peptide, endpoint="end",
+                data_dir=hydra.utils.to_absolute_path(args.data.data_dir),
+                cache_dir=hydra.utils.to_absolute_path(args.data.cache_dir),
+                n_samples=args.data.n_samples, seed=2)
 
     else:
         if args.adaptive_mean:

@@ -1,0 +1,56 @@
+# @package _global_
+
+cdsb: False
+
+# data
+Dataset: tetrapeptide_tps
+manifold: protein
+data:
+  dataset: "TetrapeptideTPS"
+  dim: 64                    # 3*(n_residues-1) + 9*(n_residues-1) + n_torsions*n_residues
+                               # (n_residues-1 root-relative SE(3) frames -- residue 0's
+                               # absolute pose is dropped for global SE(3) invariance,
+                               # see bridge/data/tetrapeptide_tps.py::root_relative_frames)
+  n_residues: 4               # tetrapeptide: L=4
+  n_torsions: 7                # pre-omega, phi, psi, chi1-4 (mdgen/geometry.py::atom37_to_torsions)
+  peptide: IPGD                # paper's Fig. 3 TPS case study (arXiv:2409.17808), in splits/4AA_test.csv
+  data_dir: ${paths.data_dir_name}/4AA_data          # atom14 .npy from vendor/mdgen/scripts/prep_sims.py (no stride/suffix)
+  cache_dir: ${paths.data_dir_name}/tetrapeptide_tps/${data.peptide}  # {peptide}_states.npz from scripts/precompute_tps_states.py
+  n_samples: 2500
+
+# transfer
+transfer: True
+Dataset_transfer: tetrapeptide_tps
+
+final_adaptive: False
+adaptive_mean: False
+load: True
+
+# device
+device: cuda
+num_workers: 0
+pin_memory: True
+
+# logging
+log_stride: 100
+gif_stride: 1000
+plot_npar: 500
+test_npar: 2000
+test_batch_size: 500
+cache_npar: 2000
+cache_batch_size: 500
+num_repeat_data: 1
+cache_refresh_stride: 200
+
+# training
+use_prev_net: True
+ema: True
+ema_rate: 0.999
+grad_clipping: True
+grad_clip: 1.0
+batch_size: 128
+num_iter: 2000
+n_ipf: 10
+lr: 0.0001
+
+num_steps: 10
